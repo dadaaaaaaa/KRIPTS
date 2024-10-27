@@ -1,309 +1,36 @@
 ﻿#include <windows.h>
-#include <tchar.h>
-#include <string>
-#include <fstream>
-#include <sstream>
-#include <vector>
-#include <cmath>
-#include <algorithm>
 #include <commdlg.h>
+#include <fstream>
+#include <string>
+#include <locale>
+#include <codecvt>
+#include <iostream>
+#include <tchar.h>
+#include <cwctype> // Для использования iswlower
+
 using namespace std;
 
-// Константы для идентификаторов элементов интерфейса
-#define MAX_SYMBOLS 256
-#define ID_BUTTON_ENCODE 1
-#define ID_BUTTON_DECODE 2
-#define ID_BUTTON_EXIT 3
-#define ID_EDIT_OUTPUT 4
-#define ID_BUTTON_SYMBOLS_FILE 5
-#define ID_BUTTON_PROBABILITIES_FILE 6
-
-// Класс для представления символа с вероятностью и кодовым словом
-class Symbol {
-private:
-    string name = ""; // Имя символа
-    double P = 0; // Вероятность символа
-    string codeName = ""; // Кодовое слово символа
-public:
-    Symbol() = default;
-    Symbol(string _name, double _P) : name(_name), P(_P) {};
-    ~Symbol() = default;
-
-    // Геттеры и методы для работы с символом
-    inline string get_name() { return name; }
-    inline double get_P() { return P; }
-    inline string get_code_name() { return codeName; }
-    inline void append_to_code_name(char c) { codeName += c; }
-};
-
-// Класс для кодирования и декодирования методом Шеннона-Фано
-class ShannonFano {
-private:
-    Symbol symbols[MAX_SYMBOLS]; // Массив символов
-    int symbol_count = 0; // Количество символов
-    bool load;
-    // Метод для оценки математического выражения
-    double evaluate_expression(const string& expression) {
-        size_t pos = expression.find('^');
-        if (pos != string::npos) {
-            double base = stod(expression.substr(0, pos));
-            double exponent = stod(expression.substr(pos + 1));
-            double r = pow(base, exponent);
-            return r;
-        }
-
-        pos = expression.find('/');
-        if (pos != string::npos) {
-            double numerator = stod(expression.substr(0, pos));
-            double denominator = stod(expression.substr(pos + 1));
-            double r = numerator / denominator;
-            return r;
-        }
-        return stod(expression);
-    }
-
-    // Метод для заполнения массива символов из файлов
-    bool filling_array(const string& fileName, const string& FileName) {
-        ifstream iFile(fileName);
-        ifstream cFile(FileName);
-        string tmpName;
-        stringstream ss;
-        string probabilitiesLine;
-        double f_p = 0.0;
-        symbol_count = 0;
-        if (!iFile || !cFile) {
-            ss << "Не удалось открыть файл." << "\r\n";
-            iFile.close();
-            cFile.close();
-            return false;
-        }
-        if (getline(cFile, probabilitiesLine)) {
-            istringstream iss(probabilitiesLine);
-            vector<string> probabilities;
-            string token;
-            while (iss >> token) {
-                probabilities.push_back(token);
-            }
-            while (iFile >> tmpName && symbol_count < MAX_SYMBOLS) {
-                if (symbol_count < probabilities.size()) {
-                    try {
-                        double P = evaluate_expression(probabilities[symbol_count]);
-                        symbols[symbol_count++] = Symbol(tmpName, P);
-                        f_p += P;
-                    }
-                    catch (const invalid_argument&) {
-                        MessageBox(NULL, _T("Ошибка в выражении вероятности: "), _T(""), MB_OK);
-                        iFile.close();
-                        cFile.close();
-                        return false;
-                        break;
-                    }
-                }
-                else {
-                    MessageBox(NULL, _T("Недостаточно вероятностей для всех имен."), _T(""), MB_OK);
-                    iFile.close();
-                    cFile.close();
-                    return false;
-                    break;
-                }
-
-            }
-        }
-        if (f_p > 1.0) {
-            ss << "Вероятность больше 1" << "\r\n";
-            MessageBox(NULL, _T("Вероятность больше 1"), _T(""), MB_OK);
-            return false;
-        }
-        else {
-            return true;
-        }
-        iFile.close();
-        cFile.close();
-    }
-
-    // Метод для сортировки символов по вероятности 
-    void sort_symbols() {
-        sort(symbols, symbols + symbol_count, [](Symbol& a, Symbol& b) {
-            return a.get_P() > b.get_P();
-            });
-    }
-
-    // Рекурсивный метод для кодирования методом Шеннона-Фано
-    void shannon_fano(int start, int end) {
-        if (start >= end) return;
-
-        double total = 0;
-        for (int i = start; i <= end; ++i) {
-            total += symbols[i].get_P();
-        }
-
-        double half = total / 2;
-        double accum = 0;
-        int split = start;
-        for (int i = start; i <= end; ++i) {
-            accum += symbols[i].get_P();
-            if (accum >= half) {
-                split = i;
-                break;
-            }
-        }
-
-        for (int i = start; i <= split; ++i) {
-            symbols[i].append_to_code_name('1');
-        }
-        for (int i = split + 1; i <= end; ++i) {
-            symbols[i].append_to_code_name('0');
-        }
-
-        shannon_fano(start, split);
-        shannon_fano(split + 1, end);
-    }
-public:
-    // Конструктор, который инициализирует и запускает кодирование
-    ShannonFano(const string symbolsFileName, const string probabilitiesFileName) {
-        load = filling_array(symbolsFileName, probabilitiesFileName);
-        if (load)
-        {
-            sort_symbols();
-            shannon_fano(0, symbol_count - 1);
-        }
-
-    }
-
-    // Метод для вывода кодовых слов символов 
-    void output_code_words(stringstream& ss) {
-        for (int i = 0; i < symbol_count; ++i) {
-            ss << "Символ " << symbols[i].get_name() << " имеет кодовое слово " << symbols[i].get_code_name() << "\r\n";
-        }
-    }
-
-    // Метод для расчета средней длины кодовых слов
-    double calculate_average_length() {
-        double avg_length = 0.0;
-        for (int i = 0; i < symbol_count; ++i) {
-            avg_length += symbols[i].get_P() * symbols[i].get_code_name().length();
-        }
-        return avg_length;
-    }
-
-    // Метод для расчета энтропии
-    double calculate_entropy() {
-        double entropy = 0.0;
-        for (int i = 0; i < symbol_count; ++i) {
-            double p = symbols[i].get_P();
-            if (p > 0) {
-                entropy -= p * log2(p);
-            }
-        }
-        return entropy;
-    }
-
-    // Метод для расчета избыточности
-    double calculate_redundancy() {
-        return calculate_average_length() - calculate_entropy();
-    }
-
-    // Метод для проверки неравенства Крафта
-    double check_kraft_inequality() {
-        double sum = 0.0;
-        for (int i = 0; i < symbol_count; ++i) {
-            sum += 1.0 / pow(2, (symbols[i].get_code_name().length()));
-        }
-        return sum;
-    }
-
-    // Метод для кодирования файла 
-    void coding(const string iFileName, const string outFileName) {
-        ifstream iFile(iFileName);
-        ofstream oFile(outFileName);
-
-        string tmp;
-        if (iFile && oFile) {
-            while (iFile >> tmp) {
-                bool found = false;
-                for (int i = 0; i < symbol_count; ++i) {
-                    if (symbols[i].get_name() == tmp) {
-                        oFile << symbols[i].get_code_name() << " ";
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    throw string{ "Слово \"" + tmp + "\" не найдено в алфавите" };
-                }
-            }
-        }
-        else {
-            if (!iFile) {
-                throw string{ "Не удалось открыть файл " + iFileName };
-            }
-            else {
-                throw string{ "Не удалось открыть файл " + outFileName };
-            }
-        }
-        iFile.close();
-        oFile.close();
-    }
-    bool load_successful() {
-        return load;
-    }
-    // Метод для декодирования файла
-    void decoding(const string iFileName, const string outFileName) {
-        ifstream iFile(iFileName);
-        ofstream oFile(outFileName);
-
-        string str;
-        if (iFile && oFile) {
-            iFile >> str;
-            string currentCode;
-            for (char c : str) {
-                currentCode += c;
-                for (int i = 0; i < symbol_count; ++i) {
-                    if (symbols[i].get_code_name() == currentCode) {
-                        oFile << symbols[i].get_name() << ' ';
-                        currentCode.clear();
-                        break;
-                    }
-                }
-            }
-            if (!currentCode.empty()) {
-                throw string{ "Слово не найдено в алфавите" };
-            }
-        }
-        else {
-            if (!iFile) {
-                throw string{ "Не удалось открыть файл " + iFileName };
-            }
-            else {
-                throw string{ "Не удалось открыть файл " + outFileName };
-            }
-        }
-        iFile.close();
-        oFile.close();
-    }
-};
-
-// Глобальные переменные для хранения имен файлов
-string symbolsFileName;
-string probabilitiesFileName;
-string encodFileName;
-string probabilities1FileName = "out1.txt";
-string decodFileName;
-string probabilities2FileName = "out2.txt";
+// Глобальные переменные
 HWND hEditOutput;
+wstring loadedText;
+wstring loadedKey;
 
 // Прототипы функций
+void loadText(const wstring& filePath);
+void loadKey(const wstring& filePath);
+wstring encrypt(const wstring& text, const wstring& key);
+wstring decrypt(const wstring& encryptedText, const wstring& key);
+void saveToFile(const wstring& filePath, const wstring& content);
+void ShowMessage(const wstring& message);
+void SelectFile(wstring& fileName);
+void print_alphabet();
+bool check_str(const wstring& str);
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-void OnEncode();
-void OnDecode();
-void polych();
-void SelectFile(string& fileName);
 
 // Главная функция программы
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nShowCmd) {
-    const TCHAR CLASS_NAME[] = _T("ShannonFanoWindowClass");
+    const TCHAR CLASS_NAME[] = _T("EncryptionWindowClass");
 
-    // Регистрация класса окна
     WNDCLASS wc = {};
     wc.lpfnWndProc = WindowProc;
     wc.hInstance = hInstance;
@@ -311,13 +38,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nShowCmd) {
 
     RegisterClass(&wc);
 
-    // Создание окна
     HWND hwnd = CreateWindowEx(
         0,
         CLASS_NAME,
-        _T("Шеннон-Фано Кодировщик"),
+        _T("Шифрование и Дешифрование"),
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 600, 500,
+        CW_USEDEFAULT, CW_USEDEFAULT, 600, 400,
         NULL,
         NULL,
         hInstance,
@@ -344,45 +70,38 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
     switch (uMsg) {
     case WM_CREATE: {
         CreateWindow(
-            _T("BUTTON"), _T("Выбрать файл символов"),
+            _T("BUTTON"), _T("Загрузить текст"),
             WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
             50, 20, 200, 30,
-            hwnd, (HMENU)ID_BUTTON_SYMBOLS_FILE,
+            hwnd, (HMENU)1,
             (HINSTANCE)GetWindowLongPtr(hwnd, GWLP_HINSTANCE), NULL);
 
         CreateWindow(
-            _T("BUTTON"), _T("Выбрать файл вероятностей"),
+            _T("BUTTON"), _T("Загрузить ключ"),
             WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
             300, 20, 200, 30,
-            hwnd, (HMENU)ID_BUTTON_PROBABILITIES_FILE,
+            hwnd, (HMENU)2,
             (HINSTANCE)GetWindowLongPtr(hwnd, GWLP_HINSTANCE), NULL);
 
         CreateWindow(
-            _T("BUTTON"), _T("Закодировать"),
+            _T("BUTTON"), _T("Зашифровать"),
             WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-            150, 60, 200, 50,
-            hwnd, (HMENU)ID_BUTTON_ENCODE,
+            50, 70, 200, 50,
+            hwnd, (HMENU)3,
             (HINSTANCE)GetWindowLongPtr(hwnd, GWLP_HINSTANCE), NULL);
 
         CreateWindow(
-            _T("BUTTON"), _T("Декодировать"),
+            _T("BUTTON"), _T("Дешифровать"),
             WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-            150, 120, 200, 50,
-            hwnd, (HMENU)ID_BUTTON_DECODE,
+            300, 70, 200, 50,
+            hwnd, (HMENU)4,
             (HINSTANCE)GetWindowLongPtr(hwnd, GWLP_HINSTANCE), NULL);
 
-        CreateWindow(
-            _T("BUTTON"), _T("Выход"),
-            WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-            150, 180, 200, 50,
-            hwnd, (HMENU)ID_BUTTON_EXIT,
-            (HINSTANCE)GetWindowLongPtr(hwnd, GWLP_HINSTANCE), NULL);
-        // Создание текстового поля для вывода
         hEditOutput = CreateWindow(
             _T("EDIT"), NULL,
             WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
-            50, 250, 500, 200,
-            hwnd, (HMENU)ID_EDIT_OUTPUT,
+            50, 130, 500, 200,
+            hwnd, NULL,
             (HINSTANCE)GetWindowLongPtr(hwnd, GWLP_HINSTANCE), NULL);
     }
                   break;
@@ -390,31 +109,51 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
     case WM_COMMAND: {
         int wmId = LOWORD(wParam);
         switch (wmId) {
-        case ID_BUTTON_ENCODE:
-            SelectFile(encodFileName);
-            OnEncode();
+        case 1: // Загрузить текст
+            SelectFile(loadedText);
+            loadText(loadedText);
+            SetWindowText(hEditOutput, loadedText.c_str()); // Отображаем загруженный текст
             break;
-        case ID_BUTTON_DECODE:
-            SelectFile(decodFileName);
-            OnDecode();
+        case 2: // Загрузить ключ
+            SelectFile(loadedKey);
+            loadKey(loadedKey);
+            SetWindowText(hEditOutput, loadedKey.c_str()); // Отображаем загруженный ключ
             break;
-        case ID_BUTTON_EXIT:
-            PostQuitMessage(0);
-            break;
-        case ID_BUTTON_SYMBOLS_FILE:
-            SelectFile(symbolsFileName);
-            if (!probabilitiesFileName.empty()) {
-                polych();
+        case 3: // Зашифровать
+            if (!loadedText.empty() && !loadedKey.empty()) {
+                if (check_str(loadedText) && check_str(loadedKey)) {
+                    wstring encryptedText = encrypt(loadedText, loadedKey);
+                    saveToFile(L"encrypted_text.txt", encryptedText);
+                    SetWindowText(hEditOutput, encryptedText.c_str());
+                    ShowMessage(L"Текст успешно зашифрован!");
+                }
+                else {
+                    ShowMessage(L"Текст или ключ содержат недопустимые символы.");
+                }
+            }
+            else {
+                ShowMessage(L"Сначала загрузите текст и ключ.");
             }
             break;
-        case ID_BUTTON_PROBABILITIES_FILE:
-            SelectFile(probabilitiesFileName);
-            if (!symbolsFileName.empty()) {
-                polych();
+        case 4: // Дешифровать
+            if (!loadedText.empty() && !loadedKey.empty()) {
+                if (check_str(loadedText) && check_str(loadedKey)) {
+                    wstring decryptedText = decrypt(loadedText, loadedKey);
+                    saveToFile(L"decrypted_text.txt", decryptedText);
+                    SetWindowText(hEditOutput, decryptedText.c_str());
+                    ShowMessage(L"Текст успешно дешифрован!");
+                }
+                else {
+                    ShowMessage(L"Текст или ключ содержат недопустимые символы.");
+                }
+            }
+            else {
+                ShowMessage(L"Сначала загрузите текст и ключ.");
             }
             break;
         }
-    }break;
+    }
+                   break;
 
     case WM_DESTROY:
         PostQuitMessage(0);
@@ -425,69 +164,118 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
     }
     return 0;
 }
-
 // Функция для выбора файла
-void SelectFile(string& fileName) {
-    OPENFILENAMEA ofn; char szFile[MAX_PATH] = { 0 }; stringstream ss;
-    ZeroMemory(&ofn, sizeof(ofn));
+void SelectFile(wstring& fileName) {
+    OPENFILENAME ofn;       // структура для открытия файла
+    wchar_t szFile[MAX_PATH] = { 0 }; // буфер для имени файла
+    ZeroMemory(&ofn, sizeof(ofn)); // обнуляем структуру
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = NULL;
     ofn.lpstrFile = szFile;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrFilter = "Все файлы\0*.*\0Текстовые файлы\0*.TXT\0";
-
+    ofn.nMaxFile = sizeof(szFile);
+    ofn.lpstrFilter = L"Все файлы\0*.*\0Текстовые файлы\0*.txt\0";
     ofn.nFilterIndex = 1;
     ofn.lpstrFileTitle = NULL;
     ofn.nMaxFileTitle = 0;
     ofn.lpstrInitialDir = NULL;
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
 
-    if (GetOpenFileNameA(&ofn)) {
+    // Передаем адрес ofn в GetOpenFileName
+    if (GetOpenFileName(&ofn)) {
         fileName = ofn.lpstrFile;
-        ss << "Выбран файл: " << fileName << "\r\n";
-    }
-    else {
-        ss << "Выбор файла отменен или не удался." << "\r\n";
     }
 }
 
-// Функция для кодирования
-void OnEncode() {
-    try {
-        ShannonFano sh(symbolsFileName, probabilitiesFileName);
-        if (sh.load_successful()) {
-            sh.coding(encodFileName, probabilities1FileName);
-            MessageBox(NULL, _T("Файл успешно закодирован!"), _T("Успех"), MB_OK);
+// Функция для загрузки текста из файла
+void loadText(const wstring& filePath) {
+    wifstream file(filePath);
+    file.imbue(std::locale(file.getloc(), new std::codecvt_utf8<wchar_t>));
+    if (!file.is_open()) {
+        wcerr << L"Ошибка при открытии файла: " << filePath << endl;
+        loadedText.clear();
+        return;
+    }
+    wstring line;
+    loadedText.clear();
+    while (getline(file, line)) {
+        loadedText += line + L"\n"; // Добавляем новую строку
+    }
+}
+
+// Функция для загрузки ключа из файла
+void loadKey(const wstring& filePath) {
+    wifstream file(filePath);
+    file.imbue(std::locale(file.getloc(), new std::codecvt_utf8<wchar_t>));
+    if (!file.is_open()) {
+        wcerr << L"Ошибка при открытии файла: " << filePath << endl;
+        loadedKey.clear();
+        return;
+    }
+    getline(file, loadedKey);
+}
+
+// Функция для шифрования текста
+wstring encrypt(const wstring& text, const wstring& key) {
+    wstring alphabet = L"АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ_";
+    wstring encrypted;
+
+    // Перебираем каждый символ в строке
+    for (wchar_t c : text) {
+        size_t index = alphabet.find(c);
+        if (index != wstring::npos) {
+            encrypted += key[index];
+        }
+        else {
+            encrypted += c; // Оставляем символы, которые не находятся в алфавите
         }
     }
-    catch (const string& error_message) {
-        MessageBoxA(NULL, error_message.c_str(), "Ошибка", MB_OK | MB_ICONERROR);
-    }
+    return encrypted;
 }
 
-// Функция для вывода результатов кодирования
-void polych() {
-    ShannonFano sh(symbolsFileName, probabilitiesFileName);
-    stringstream ss;
-    if (sh.load_successful()) {
-        sh.output_code_words(ss);
-        ss << "Средняя длина: " << sh.calculate_average_length() << "\r\n";
-        ss << "Избыточность: " << sh.calculate_redundancy() << "\r\n";
-        ss << "Неравенство Крафта выполнено: " << sh.check_kraft_inequality() << (sh.check_kraft_inequality() <= 1.0 ? " Да" : " Нет") << "\r\n";
+// Функция для дешифрования текста
+wstring decrypt(const wstring& encryptedText, const wstring& key) {
+    wstring alphabet = L"АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ_";
+    wstring decrypted;
 
-    }SetWindowTextA(hEditOutput, ss.str().c_str());
-}
-
-// Функция для декодирования
-void OnDecode() {
-    try {
-        ShannonFano sh(symbolsFileName, probabilitiesFileName);
-        if (sh.load_successful()) {
-            sh.decoding(decodFileName, probabilities2FileName);
-            MessageBox(NULL, _T("Файл успешно декодирован!"), _T("Успех"), MB_OK);
+    // Перебираем каждый символ в строке
+    for (wchar_t c : encryptedText) {
+        size_t index = key.find(c);
+        if (index != wstring::npos) {
+            decrypted += alphabet[index];
+        }
+        else {
+            decrypted += c; // Оставляем символы, которые не находятся в алфавите
         }
     }
-    catch (const string& error_message) {
-        MessageBoxA(NULL, error_message.c_str(), "Ошибка", MB_OK | MB_ICONERROR);
+    return decrypted;
+}
+
+// Функция для сохранения текста в файл
+void saveToFile(const wstring& filePath, const wstring& content) {
+    wofstream file(filePath);
+    if (!file.is_open()) {
+        wcerr << L"Ошибка при открытии файла для записи: " << filePath << endl;
+        return;
     }
+    file << content;
+}
+
+// Функция для отображения сообщения
+void ShowMessage(const wstring& message) {
+    MessageBoxW(NULL, message.c_str(), L"Сообщение", MB_OK);
+}
+
+
+// Функция проверки, что все символы в строке принадлежат алфавиту
+bool check_str(const wstring& str) {
+    wstring alphabet = L"АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ_"; // Используем строчные буквы русского алфавита
+    for (auto& simbol : str) {
+        if (alphabet.find(simbol) == wstring::npos && simbol !='\n') { // Проверяем, есть ли символ в алфавите
+            wchar_t buffer[100];
+            swprintf(buffer, sizeof(buffer) / sizeof(wchar_t), L"Символ %lc не принадлежит алфавиту", simbol);
+            ShowMessage(buffer);
+            return false;
+        }
+    }
+    return true;
 }
